@@ -2,42 +2,61 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=version.env
 source "${SCRIPT_DIR}/version.env"
 
-ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
-SOURCE_DIR="${BUILD_DIR}/source"
-RELEASE_DIR="${BUILD_DIR}/release"
+ARCHIVE="${BUILD_DIR}/${KERNEL_RELEASE}.tar.gz"
+EXTRACT_DIR="${BUILD_DIR}/archive"
+KPART="${BUILD_DIR}/vmlinux.kpart"
+MODULES_DIR="${BUILD_DIR}/modules"
 
 mkdir -p "${BUILD_DIR}"
-rm -rf "${SOURCE_DIR}" "${RELEASE_DIR}"
 
 echo "==> Kernel: ${KERNEL_RELEASE}"
-echo "==> Repository: ${KERNEL_REPO}"
-echo "==> Commit: ${KERNEL_COMMIT}"
 
-echo "==> Cloning kernel source..."
-git clone \
-    --depth 1 \
-    --branch "${KERNEL_TAG}" \
-    "${KERNEL_REPO}" \
-    "${SOURCE_DIR}"
+echo "==> Downloading kernel archive..."
+curl -fL --retry 3 \
+    -o "${ARCHIVE}" \
+    "${KERNEL_ARCHIVE_URL}"
 
-cd "${SOURCE_DIR}"
+echo "==> Verifying SHA-256..."
+echo "${KERNEL_SHA256}  ${ARCHIVE}" | sha256sum -c -
 
-echo "==> Verifying commit..."
-ACTUAL_COMMIT="$(git rev-parse HEAD)"
+echo "==> Extracting archive..."
+rm -rf "${EXTRACT_DIR}"
+mkdir -p "${EXTRACT_DIR}"
 
-if [[ "${ACTUAL_COMMIT}" != "${KERNEL_COMMIT}" ]]; then
-    echo "ERROR: unexpected commit"
-    echo "Expected: ${KERNEL_COMMIT}"
-    echo "Actual:   ${ACTUAL_COMMIT}"
+tar -xzf "${ARCHIVE}" -C "${EXTRACT_DIR}"
+
+echo "==> Locating vmlinux.kpart..."
+KPART_SOURCE="${EXTRACT_DIR}/boot/vmlinux.kpart-${KERNEL_RELEASE}"
+
+if [[ ! -f "${KPART_SOURCE}" ]]; then
+    echo "ERROR: expected kernel partition not found:"
+    echo "       ${KPART_SOURCE}"
     exit 1
 fi
 
-echo "==> Kernel source verified."
-echo "    ${ACTUAL_COMMIT}"
+cp "${KPART_SOURCE}" "${KPART}"
 
-echo "==> Kernel source is ready at:"
-echo "    ${SOURCE_DIR}"
+echo "==> Installing kernel modules..."
+rm -rf "${MODULES_DIR}"
+mkdir -p "${MODULES_DIR}"
+
+SOURCE_MODULES="${EXTRACT_DIR}/lib/modules"
+
+if [[ ! -d "${SOURCE_MODULES}" ]]; then
+    echo "ERROR: kernel modules not found:"
+    echo "       ${SOURCE_MODULES}"
+    exit 1
+fi
+
+cp -a "${SOURCE_MODULES}/." "${MODULES_DIR}/"
+
+echo "==> Verifying extracted kernel..."
+echo "    SHA-256:"
+sha256sum "${KPART}"
+
+echo "==> Kernel ready:"
+echo "    ${KPART}"
+echo "    ${MODULES_DIR}"
