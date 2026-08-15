@@ -13,50 +13,63 @@ MODULES_DIR="${BUILD_DIR}/modules"
 mkdir -p "${BUILD_DIR}"
 
 echo "==> Kernel: ${KERNEL_RELEASE}"
+echo "==> Download: ${KERNEL_ARCHIVE_URL}"
 
-echo "==> Downloading kernel archive..."
 curl -fL --retry 3 \
     -o "${ARCHIVE}" \
     "${KERNEL_ARCHIVE_URL}"
 
-echo "==> Verifying SHA-256..."
-echo "${KERNEL_SHA256}  ${ARCHIVE}" | sha256sum -c -
+if [[ -n "${KERNEL_ARCHIVE_SHA256}" ]]; then
+    echo "==> Verifying archive SHA-256..."
+    echo "${KERNEL_ARCHIVE_SHA256}  ${ARCHIVE}" | sha256sum -c -
+else
+    echo "==> WARNING: archive SHA-256 is not configured"
+fi
 
 echo "==> Extracting archive..."
+
 rm -rf "${EXTRACT_DIR}"
 mkdir -p "${EXTRACT_DIR}"
 
 tar -xzf "${ARCHIVE}" -C "${EXTRACT_DIR}"
 
-echo "==> Locating vmlinux.kpart..."
-KPART_SOURCE="${EXTRACT_DIR}/boot/vmlinux.kpart-${KERNEL_RELEASE}"
+KPART_SOURCE="${EXTRACT_DIR}/${KERNEL_KPART_PATH}"
+MODULES_SOURCE="${EXTRACT_DIR}/${KERNEL_MODULES_PATH}"
 
 if [[ ! -f "${KPART_SOURCE}" ]]; then
-    echo "ERROR: expected kernel partition not found:"
+    echo "ERROR: kernel partition not found:"
     echo "       ${KPART_SOURCE}"
     exit 1
 fi
 
-cp "${KPART_SOURCE}" "${KPART}"
-
-echo "==> Installing kernel modules..."
-rm -rf "${MODULES_DIR}"
-mkdir -p "${MODULES_DIR}"
-
-SOURCE_MODULES="${EXTRACT_DIR}/lib/modules"
-
-if [[ ! -d "${SOURCE_MODULES}" ]]; then
+if [[ ! -d "${MODULES_SOURCE}" ]]; then
     echo "ERROR: kernel modules not found:"
-    echo "       ${SOURCE_MODULES}"
+    echo "       ${MODULES_SOURCE}"
     exit 1
 fi
 
-cp -a "${SOURCE_MODULES}/." "${MODULES_DIR}/"
+echo "==> Installing vmlinux.kpart..."
 
-echo "==> Verifying extracted kernel..."
-echo "    SHA-256:"
-sha256sum "${KPART}"
+cp -f "${KPART_SOURCE}" "${KPART}"
 
-echo "==> Kernel ready:"
-echo "    ${KPART}"
-echo "    ${MODULES_DIR}"
+echo "==> Installing kernel modules..."
+
+rm -rf "${MODULES_DIR}"
+mkdir -p "${MODULES_DIR}"
+
+cp -a "${EXTRACT_DIR}/lib/modules/." "${MODULES_DIR}/"
+
+echo "==> Verifying vmlinux.kpart..."
+
+KPART_SHA256="$(sha256sum "${KPART}" | awk '{print $1}')"
+
+echo "    SHA-256: ${KPART_SHA256}"
+
+if [[ "${KPART_SHA256}" != "ada739626522dad756e22f39b3be139bc627e541d8740f0f294793be5d3cafd1" ]]; then
+    echo "ERROR: unexpected vmlinux.kpart SHA-256"
+    exit 1
+fi
+
+echo "==> Kernel ready."
+echo "    kpart:   ${KPART}"
+echo "    modules: ${MODULES_DIR}"
