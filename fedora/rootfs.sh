@@ -62,6 +62,7 @@ done
 info "Instalando paquetes"
 
 dnf \
+    --use-host-config \
     --releasever="${FEDORA_RELEASE}" \
     --installroot="${ROOTFS}" \
     --forcearch="${FEDORA_ARCH}" \
