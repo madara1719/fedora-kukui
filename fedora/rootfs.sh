@@ -110,14 +110,20 @@ DisplayServer=x11
 Relogin=false
 EOF
 
-info "Habilitando servicios"
+info "Preparando servicios"
 
-systemctl --root="${ROOTFS}" enable NetworkManager.service
-systemctl --root="${ROOTFS}" enable sddm.service
+mkdir -p "${ROOTFS}/etc/systemd/system"
 
-# Bluetooth solamente si el paquete/servicio está presente.
+ln -sf /usr/lib/systemd/system/NetworkManager.service \
+    "${ROOTFS}/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+
+ln -sf /usr/lib/systemd/system/sddm.service \
+    "${ROOTFS}/etc/systemd/system/display-manager.service"
+
 if [[ -f "${ROOTFS}/usr/lib/systemd/system/bluetooth.service" ]]; then
-    systemctl --root="${ROOTFS}" enable bluetooth.service
+    mkdir -p "${ROOTFS}/etc/systemd/system/bluetooth.target.wants"
+    ln -sf /usr/lib/systemd/system/bluetooth.service \
+        "${ROOTFS}/etc/systemd/system/bluetooth.target.wants/bluetooth.service"
 fi
 
 info "Limpiando caches"
