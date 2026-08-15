@@ -1,0 +1,74 @@
+name: Build Fedora Kukui
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  rootfs:
+    runs-on: ubuntu-24.04-arm
+
+    container:
+      image: fedora:44
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          uname -a
+          echo "Architecture:"
+          uname -m
+          echo "Fedora:"
+          cat /etc/fedora-release
+
+      - name: Install build tools
+        run: |
+          dnf -y install \
+            bash \
+            coreutils \
+            dnf \
+            findutils \
+            grep \
+            sed \
+            rsync \
+            tar \
+            xz \
+            ca-certificates
+
+      - name: Fetch kernel
+        run: |
+          chmod +x kernel/fetch.sh
+          ./kernel/fetch.sh
+
+      - name: Build Fedora rootfs
+        run: |
+          chmod +x fedora/rootfs.sh
+          ./fedora/rootfs.sh
+
+      - name: Show rootfs
+        run: |
+          du -sh build/rootfs
+          find build/rootfs -maxdepth 2 -type d | sort | head -100
+
+      - name: Archive rootfs
+        run: |
+          mkdir -p build/artifacts
+
+          tar \
+            --numeric-owner \
+            --xattrs \
+            --acls \
+            -C build/rootfs \
+            -cJf build/artifacts/fedora-kukui-rootfs.tar.xz \
+            .
+
+      - name: Upload rootfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-kukui-rootfs
+          path: build/artifacts/fedora-kukui-rootfs.tar.xz
+          if-no-files-found: error
