@@ -9,10 +9,12 @@ KERNEL="${KERNEL:-${ROOT_DIR}/build/kernel/vmlinux.kpart}"
 IMAGE_DIR="${ROOT_DIR}/build/image"
 IMAGE="${IMAGE_DIR}/fedora-kukui.img"
 
-# 8 GiB para el primer prototipo.
-# Se puede sobrescribir:
-# IMAGE_SIZE=16G ./scripts/build-image.sh
 IMAGE_SIZE="${IMAGE_SIZE:-8G}"
+
+LOOP=""
+MAPPER=""
+MNT_BOOT=""
+MNT_ROOT=""
 
 die() {
     echo "ERROR: $*" >&2
@@ -24,54 +26,109 @@ info() {
     echo "==> $*"
 }
 
-[[ "${EUID}" -eq 0 ]] || die "Este script debe ejecutarse como root"
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "Falta la herramienta: $1"
+}
+
+cleanup() {
+    set +e
+
+    if [[ -n "${MNT_BOOT}" && -d "${MNT_BOOT}" ]]; then
+        umount "${MNT_BOOT}" 2>/dev/null || true
+    fi
+
+    if [[ -n "${MNT_ROOT}" && -d "${MNT_ROOT}" ]]; then
+        umount "${MNT_ROOT}" 2>/dev/null || true
+    fi
+
+    if [[ -n "${LOOP}" ]]; then
+        kpartx -dv "${LOOP}" 2>/dev/null || true
+        losetup -d "${LOOP}" 2>/dev/null || true
+    fi
+
+    if [[ -n "${MNT_BOOT}" && -d "${MNT_BOOT}" ]]; then
+        rmdir "${MNT_BOOT}" 2>/dev/null || true
+    fi
+
+    if [[ -n "${MNT_ROOT}" && -d "${MNT_ROOT}" ]]; then
+        rmdir "${MNT_ROOT}" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT
+
+# ----------------------------------------------------------------------
+# Preconditions
+# ----------------------------------------------------------------------
+
+[[ "${EUID}" -eq 0 ]] || die "Ejecuta este script como root"
 
 [[ -d "${ROOTFS}" ]] ||
-    die "No existe ${ROOTFS}"
+    die "No existe el rootfs: ${ROOTFS}"
 
 [[ -f "${KERNEL}" ]] ||
-    die "No existe ${KERNEL}"
+    die "No existe el kernel: ${KERNEL}"
 
-command -v cgpt >/dev/null ||
-    die "Falta cgpt"
-
-command -v sgdisk >/dev/null ||
-    die "Falta sgdisk"
-
-command -v mkfs.ext4 >/dev/null ||
-    die "Falta mkfs.ext4"
-
-command -v mkfs.btrfs >/dev/null ||
-    die "Falta mkfs.btrfs"
-
-command -v losetup >/dev/null ||
-    die "Falta losetup"
-
-command -v mount >/dev/null ||
-    die "Falta mount"
-
-command -v rsync >/dev/null ||
-    die "Falta rsync"
+require_cmd cgpt
+require_cmd dd
+require_cmd blkid
+require_cmd kpartx
+require_cmd losetup
+require_cmd mkfs.ext4
+require_cmd mkfs.btrfs
+require_cmd mount
+require_cmd rsync
+require_cmd truncate
+require_cmd udevadm
 
 mkdir -p "${IMAGE_DIR}"
 
 rm -f "${IMAGE}"
 
+# ----------------------------------------------------------------------
+# Create image
+# ----------------------------------------------------------------------
+
 info "Creating image: ${IMAGE_SIZE}"
 
 truncate -s "${IMAGE_SIZE}" "${IMAGE}"
 
+# ----------------------------------------------------------------------
+# Create ChromeOS-compatible GPT
+# ----------------------------------------------------------------------
+
 info "Creating GPT"
 
+# Reset any existing GPT metadata.
+cgpt create -z "${IMAGE}"
+
+# Create fresh GPT.
 cgpt create "${IMAGE}"
 
-# 1 MiB alignment + ChromeOS kernel partitions.
-# Exact layout taken from the working Kukui installation:
+# Create protective MBR.
+cgpt boot -p "${IMAGE}"
+
+# ----------------------------------------------------------------------
+# Partition layout
 #
-# p1: start 8192,  size 262144 sectors = 128 MiB
-# p2: start 270336, size 262144 sectors = 128 MiB
-# p3: start 532480, size 1048576 sectors = 512 MiB
-# p4: start 1581056, remaining sectors
+# p1: KernelA
+#     start 8192 sectors
+#     size 262144 sectors = 128 MiB
+#
+# p2: KernelB
+#     start 270336 sectors
+#     size 262144 sectors = 128 MiB
+#
+# p3: /boot
+#     start 532480 sectors
+#     size 1048576 sectors = 512 MiB
+#
+# p4: /
+#     start 1581056 sectors
+#     remaining space
+# ----------------------------------------------------------------------
+
+info "Creating KernelA"
 
 cgpt add \
     -i 1 \
@@ -81,8 +138,10 @@ cgpt add \
     -l KernelA \
     -P 10 \
     -S 1 \
-    -T 0 \
+    -T 2 \
     "${IMAGE}"
+
+info "Creating KernelB"
 
 cgpt add \
     -i 2 \
@@ -95,6 +154,8 @@ cgpt add \
     -T 0 \
     "${IMAGE}"
 
+info "Creating boot partition"
+
 cgpt add \
     -i 3 \
     -b 532480 \
@@ -104,13 +165,24 @@ cgpt add \
     -B 1 \
     "${IMAGE}"
 
-LAST_SECTOR="$(cgpt show "${IMAGE}" | awk '/Sec GPT table/ {print $1}')"
+# Determine the last usable sector from the GPT.
+LAST_SECTOR="$(
+    cgpt show "${IMAGE}" |
+        awk '/Sec GPT table/ { print $1; exit }'
+)"
+
+[[ -n "${LAST_SECTOR}" ]] ||
+    die "No se pudo determinar el final de la GPT"
 
 ROOT_START=1581056
+
+# Keep the secondary GPT table/header intact.
 ROOT_SIZE=$((LAST_SECTOR - ROOT_START - 33))
 
 (( ROOT_SIZE > 0 )) ||
     die "No hay espacio suficiente para la partición root"
+
+info "Creating root partition"
 
 cgpt add \
     -i 4 \
@@ -122,54 +194,85 @@ cgpt add \
 
 sync
 
+# ----------------------------------------------------------------------
+# Verify GPT before writing filesystems
+# ----------------------------------------------------------------------
+
+info "Verifying GPT"
+
+cgpt show "${IMAGE}"
+
+# ----------------------------------------------------------------------
+# Write kernel to KernelA / KernelB
+# ----------------------------------------------------------------------
+
 info "Writing KernelA"
 
-dd if="${KERNEL}" \
-   of="${IMAGE}" \
-   bs=512 \
-   seek=8192 \
-   conv=notrunc \
-   status=progress
+dd \
+    if="${KERNEL}" \
+    of="${IMAGE}" \
+    bs=512 \
+    seek=8192 \
+    conv=notrunc \
+    status=progress
 
 info "Writing KernelB"
 
-dd if="${KERNEL}" \
-   of="${IMAGE}" \
-   bs=512 \
-   seek=270336 \
-   conv=notrunc \
-   status=progress
+dd \
+    if="${KERNEL}" \
+    of="${IMAGE}" \
+    bs=512 \
+    seek=270336 \
+    conv=notrunc \
+    status=progress
 
 sync
 
+# ----------------------------------------------------------------------
+# Attach image as loop device
+# ----------------------------------------------------------------------
+
 info "Attaching loop device"
 
-LOOP="$(losetup --find --show --partscan "${IMAGE}")" 
- 
-info "Reloading partition table"
+LOOP="$(losetup --find --show "${IMAGE}")"
 
-partx -a "${LOOP}" || true
+[[ -n "${LOOP}" ]] ||
+    die "No se pudo crear loop device"
 
-udevadm settle || true
+info "Loop device: ${LOOP}"
 
-ls -l "${LOOP}"*
+# ----------------------------------------------------------------------
+# Create partition mappings
+# ----------------------------------------------------------------------
 
-cleanup() {
-    set +e
+info "Creating partition mappings"
 
-    umount "${MNT_BOOT}" 2>/dev/null || true
-    umount "${MNT_ROOT}" 2>/dev/null || true
+kpartx -av "${LOOP}"
 
-    losetup -d "${LOOP}" 2>/dev/null || true
-}
+udevadm settle
 
-trap cleanup EXIT
+MAPPER="$(basename "${LOOP}")"
 
-MNT_BOOT="$(mktemp -d)"
-MNT_ROOT="$(mktemp -d)"
+BOOT_DEV="/dev/mapper/${MAPPER}p3"
+ROOT_DEV="/dev/mapper/${MAPPER}p4"
 
-BOOT_DEV="${LOOP}p3"
-ROOT_DEV="${LOOP}p4"
+info "Partition devices"
+
+ls -l \
+    "/dev/mapper/${MAPPER}p1" \
+    "/dev/mapper/${MAPPER}p2" \
+    "${BOOT_DEV}" \
+    "${ROOT_DEV}"
+
+[[ -b "${BOOT_DEV}" ]] ||
+    die "No existe ${BOOT_DEV}"
+
+[[ -b "${ROOT_DEV}" ]] ||
+    die "No existe ${ROOT_DEV}"
+
+# ----------------------------------------------------------------------
+# Create filesystems
+# ----------------------------------------------------------------------
 
 info "Formatting boot"
 
@@ -185,6 +288,13 @@ mkfs.btrfs \
     -L rootpart \
     "${ROOT_DEV}"
 
+# ----------------------------------------------------------------------
+# Mount filesystems
+# ----------------------------------------------------------------------
+
+MNT_BOOT="$(mktemp -d)"
+MNT_ROOT="$(mktemp -d)"
+
 info "Mounting root"
 
 mount \
@@ -199,6 +309,10 @@ mount \
     "${BOOT_DEV}" \
     "${MNT_BOOT}"
 
+# ----------------------------------------------------------------------
+# Install Fedora rootfs
+# ----------------------------------------------------------------------
+
 info "Installing Fedora rootfs"
 
 rsync \
@@ -207,40 +321,81 @@ rsync \
     "${ROOTFS}/" \
     "${MNT_ROOT}/"
 
-info "Installing boot files"
+# ----------------------------------------------------------------------
+# Populate /boot
+# ----------------------------------------------------------------------
+
+info "Preparing /boot"
 
 mkdir -p "${MNT_BOOT}"
 
-# For the first image we keep the kernel artifacts in /boot as well.
-# The actual Chromebook boot kernel is p1/p2.
-cp -a \
-    "${ROOT_DIR}/kernel/build/archive/boot/." \
-    "${MNT_BOOT}/" \
-    2>/dev/null || true
+# We do not depend on the local kernel archive.
+# The Chromebook boots from KernelA/KernelB.
+#
+# Keep /boot itself valid for Fedora, but do not copy artifacts that
+# may not be available in the GitHub Actions image job.
+
+mkdir -p "${MNT_BOOT}/lost+found"
+
+# ----------------------------------------------------------------------
+# Install /etc/fstab
+# ----------------------------------------------------------------------
 
 info "Generating fstab"
 
 ROOT_UUID="$(blkid -s UUID -o value "${ROOT_DEV}")"
 BOOT_UUID="$(blkid -s UUID -o value "${BOOT_DEV}")"
 
-mkdir -p "${MNT_ROOT}/etc"
+[[ -n "${ROOT_UUID}" ]] ||
+    die "No se pudo obtener UUID de root"
+
+[[ -n "${BOOT_UUID}" ]] ||
+    die "No se pudo obtener UUID de boot"
 
 cat > "${MNT_ROOT}/etc/fstab" <<EOF
 UUID=${ROOT_UUID} / btrfs noatime,nodiratime,compress-force=zstd:3,ssd,discard=async 0 0
 UUID=${BOOT_UUID} /boot ext4 noatime,nodiratime,errors=remount-ro 0 2
 EOF
 
-info "Finishing"
+# ----------------------------------------------------------------------
+# Basic validation
+# ----------------------------------------------------------------------
+
+info "Validating rootfs"
+
+[[ -d "${MNT_ROOT}/usr" ]] ||
+    die "El rootfs no contiene /usr"
+
+[[ -d "${MNT_ROOT}/etc" ]] ||
+    die "El rootfs no contiene /etc"
+
+[[ -f "${MNT_ROOT}/etc/fstab" ]] ||
+    die "No se creó /etc/fstab"
+
+info "Validating kernel"
+
+KERNEL_SHA256="$(sha256sum "${KERNEL}" | awk '{print $1}')"
+
+echo "Kernel SHA-256:"
+echo "${KERNEL_SHA256}"
+
+if [[ "${KERNEL_SHA256}" != \
+    "ada739626522dad756e22f39b3be139bc627e541d8740f0f294793be5d3cafd1" ]]; then
+    die "SHA-256 inesperado para vmlinux.kpart"
+fi
 
 sync
 
-echo
-echo "Image:"
-echo "  ${IMAGE}"
-echo
-echo "Partitions:"
+# ----------------------------------------------------------------------
+# Final report
+# ----------------------------------------------------------------------
+
+info "Final GPT"
+
 cgpt show "${IMAGE}"
 
-echo
-echo "Image size:"
+info "Image"
+
 ls -lh "${IMAGE}"
+
+info "Image build completed successfully"
