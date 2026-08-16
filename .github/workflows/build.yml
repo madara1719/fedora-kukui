@@ -152,7 +152,25 @@ jobs:
         run: |
           sudo cgpt show build/image/fedora-kukui.img
 
-          ls -lh build/image/fedora-kukui.img 
+          echo "KernelA:"
+          sudo dd \
+            if=build/image/fedora-kukui.img \
+            bs=512 \
+            skip=8192 \
+            count=38456 \
+            status=none |
+            sha256sum
+
+          echo "KernelB:"
+          sudo dd \
+            if=build/image/fedora-kukui.img \
+            bs=512 \
+            skip=270336 \
+            count=38456 \
+            status=none |
+            sha256sum
+
+          ls -lh build/image/fedora-kukui.img
 
       - name: Fix image permissions
         run: |
@@ -162,5 +180,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fedora-kukui-image
-          path: build/image/fedora-kukui.img.xz
+          path: build/image/fedora-kukui.img
           if-no-files-found: error
