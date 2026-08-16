@@ -112,7 +112,7 @@ jobs:
             e2fsprogs \
             rsync \
             xz-utils \
-            util-linux 
+            util-linux \
             sudo apt-get install -y \ 
             kpartx
 
