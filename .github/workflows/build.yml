@@ -37,7 +37,14 @@ jobs:
             rsync \
             tar \
             xz \
-            ca-certificates
+            ca-certificates \ 
+            cgpt \
+            btrfs-progs \
+            e2fsprogs \
+            rsync \
+            xz-utils \
+            util-linux \
+            kpartx
 
       - name: Fetch kernel
         run: |
