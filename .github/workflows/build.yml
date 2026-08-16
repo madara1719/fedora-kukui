@@ -152,12 +152,11 @@ jobs:
         run: |
           sudo cgpt show build/image/fedora-kukui.img
 
-          ls -lh build/image/fedora-kukui.img
+          ls -lh build/image/fedora-kukui.img 
 
-      - name: Compress image
+      - name: Fix image permissions
         run: |
-          xz -T0 -9 \
-            build/image/fedora-kukui.img
+          sudo chown "${USER}:${USER}" build/image/fedora-kukui.img
 
       - name: Upload image
         uses: actions/upload-artifact@v4
