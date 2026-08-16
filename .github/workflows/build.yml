@@ -45,7 +45,7 @@ jobs:
             xz-utils \
             util-linux \
             kpartx
-
+       
       - name: Fetch kernel
         run: |
           chmod +x kernel/fetch.sh
