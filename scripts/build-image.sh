@@ -144,7 +144,15 @@ sync
 
 info "Attaching loop device"
 
-LOOP="$(losetup --find --show --partscan "${IMAGE}")"
+LOOP="$(losetup --find --show --partscan "${IMAGE}")" 
+ 
+info "Reloading partition table"
+
+partx -a "${LOOP}" || true
+
+udevadm settle || true
+
+ls -l "${LOOP}"*
 
 cleanup() {
     set +e
