@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-ROOTFS="${ROOT_DIR}/build/rootfs"
-KERNEL="${ROOT_DIR}/kernel/build/vmlinux.kpart"
+ROOTFS="${ROOTFS:-${ROOT_DIR}/build/rootfs}"
+KERNEL="${KERNEL:-${ROOT_DIR}/build/kernel/vmlinux.kpart}"
 
 IMAGE_DIR="${ROOT_DIR}/build/image"
 IMAGE="${IMAGE_DIR}/fedora-kukui.img"
