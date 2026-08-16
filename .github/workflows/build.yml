@@ -145,7 +145,7 @@ jobs:
           chmod +x scripts/build-image.sh
 
           sudo \
-            IMAGE_SIZE=8G \
+            IMAGE_SIZE=6G \
             ./scripts/build-image.sh
 
       - name: Validate image
