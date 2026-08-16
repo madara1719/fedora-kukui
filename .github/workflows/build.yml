@@ -49,10 +49,12 @@ jobs:
           chmod +x fedora/rootfs.sh
           ./fedora/rootfs.sh
 
-      - name: Show rootfs
+      - name: Install matching kernel modules
         run: |
-          du -sh build/rootfs
-          find build/rootfs -maxdepth 2 -type d | sort | head -100
+          mkdir -p build/rootfs/lib/modules
+          cp -a \
+            kernel/build/modules/6.12.66-stb-cbm+ \
+            build/rootfs/lib/modules/
 
       - name: Archive rootfs
         run: |
@@ -66,9 +68,107 @@ jobs:
             -cJf build/artifacts/fedora-kukui-rootfs.tar.xz \
             .
 
+      - name: Package kernel
+        run: |
+          mkdir -p build/kernel-artifact
+
+          cp \
+            kernel/build/vmlinux.kpart \
+            build/kernel-artifact/
+
+          cp -a \
+            kernel/build/modules \
+            build/kernel-artifact/
+
       - name: Upload rootfs
         uses: actions/upload-artifact@v4
         with:
           name: fedora-kukui-rootfs
           path: build/artifacts/fedora-kukui-rootfs.tar.xz
+          if-no-files-found: error
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-kukui-kernel
+          path: build/kernel-artifact
+          if-no-files-found: error
+
+  image:
+    needs: rootfs
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install image build tools
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            cgpt \
+            btrfs-progs \
+            e2fsprogs \
+            rsync \
+            xz-utils \
+            util-linux
+
+      - name: Download rootfs
+        uses: actions/download-artifact@v4
+        with:
+          name: fedora-kukui-rootfs
+          path: build/rootfs-archive
+
+      - name: Download kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: fedora-kukui-kernel
+          path: build/kernel
+
+      - name: Extract rootfs
+        run: |
+          mkdir -p build/rootfs
+
+          tar \
+            --numeric-owner \
+            --xattrs \
+            --acls \
+            -xJf \
+            build/rootfs-archive/fedora-kukui-rootfs.tar.xz \
+            -C build/rootfs
+
+      - name: Verify kernel
+        run: |
+          sha256sum build/kernel/vmlinux.kpart
+
+          test \
+            "$(sha256sum build/kernel/vmlinux.kpart | awk '{print $1}')" \
+            = \
+            "ada739626522dad756e22f39b3be139bc627e541d8740f0f294793be5d3cafd1"
+
+      - name: Build image
+        run: |
+          chmod +x scripts/build-image.sh
+
+          sudo \
+            IMAGE_SIZE=8G \
+            ./scripts/build-image.sh
+
+      - name: Validate image
+        run: |
+          sudo cgpt show build/image/fedora-kukui.img
+
+          ls -lh build/image/fedora-kukui.img
+
+      - name: Compress image
+        run: |
+          xz -T0 -9 \
+            build/image/fedora-kukui.img
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-kukui-image
+          path: build/image/fedora-kukui.img.xz
           if-no-files-found: error
