@@ -1,1 +1,2 @@
-# fedora-kukui
+# fedora-kukui 
+Scripts by ChatGPT
