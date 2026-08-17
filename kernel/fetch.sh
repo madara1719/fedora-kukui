@@ -63,10 +63,11 @@ echo "==> Verifying vmlinux.kpart..."
 
 KPART_SHA256="$(sha256sum "${KPART}" | awk '{print $1}')"
 
-echo "    SHA-256: ${KPART_SHA256}"
+echo "    SHA-256 actual:   [${KPART_SHA256}]"
+echo "    SHA-256 esperado: [${KERNEL_KPART_SHA256}]"
 
-if [[ "${KPART_SHA256}" != "${KERNEL_KPART_SHA256}" ]]; then     
-echo "ERROR: unexpected vmlinux.kpart SHA-256"
+if [[ "${KPART_SHA256}" != "${KERNEL_KPART_SHA256}" ]]; then
+    echo "ERROR: unexpected vmlinux.kpart SHA-256"
     exit 1
 fi
 
