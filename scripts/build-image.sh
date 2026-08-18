@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" 
+source "${ROOT_DIR}/kernel/version.env"
 
 ROOTFS="${ROOTFS:-${ROOT_DIR}/build/rootfs}"
 KERNEL="${KERNEL:-${ROOT_DIR}/build/kernel/vmlinux.kpart}"
@@ -379,8 +380,7 @@ KERNEL_SHA256="$(sha256sum "${KERNEL}" | awk '{print $1}')"
 echo "Kernel SHA-256:"
 echo "${KERNEL_SHA256}"
 
-if [[ "${KERNEL_SHA256}" != \
-    "ada739626522dad756e22f39b3be139bc627e541d8740f0f294793be5d3cafd1" ]]; then
+if [[ "${KERNEL_SHA256}" != "${KERNEL_KPART_SHA256}" ]]; then
     die "SHA-256 inesperado para vmlinux.kpart"
 fi
 
