@@ -53,7 +53,7 @@ jobs:
         run: |
           mkdir -p build/rootfs/lib/modules
           cp -a \
-            kernel/build/modules/6.12.66-stb-cbm+ \
+            kernel/build/modules/6.12.50-stb-cbm+ \
             build/rootfs/lib/modules/
 
       - name: Archive rootfs
