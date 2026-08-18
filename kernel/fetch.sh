@@ -52,6 +52,13 @@ echo "==> Installing vmlinux.kpart..."
 
 cp -f "${KPART_SOURCE}" "${KPART}"
 
+echo "==> Installing kernel modules..."
+
+rm -rf "${MODULES_DIR}"
+mkdir -p "${MODULES_DIR}"
+
+cp -a "${MODULES_SOURCE}" "${MODULES_DIR}/"
+
 echo "==> Verifying vmlinux.kpart..."
 
 KPART_SHA256="$(sha256sum "${KPART}" | awk '{print $1}')"
