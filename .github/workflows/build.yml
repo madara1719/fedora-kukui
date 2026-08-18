@@ -133,11 +133,12 @@ jobs:
 
       - name: Verify kernel
         run: |
-             sha256sum build/kernel/vmlinux.kpart
-              test \
-              "$(sha256sum build/kernel/vmlinux.kpart | awk '{print $1}')" \
-                = \
-               "39c486a5ad5ba5f348255fecd47e71d2359d15641d897058f0a87f51658764c"
+         sha256sum build/kernel/vmlinux.kpart
+
+         test \
+           "$(sha256sum build/kernel/vmlinux.kpart | awk '{print $1}')" \
+          = \
+         "39c486a5ad5ba5f348255fecd47e71d2359d15641d897058f0a87f51658764c6"
 
       - name: Build image
         run: |
