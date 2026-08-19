@@ -49,12 +49,16 @@ jobs:
           chmod +x fedora/rootfs.sh
           ./fedora/rootfs.sh
 
-      - name: Install matching kernel modules
+      - name: Install vboot-utils (for kernel signing)
+        run: sudo apt-get update && sudo apt-get install -y vboot-utils
+
+      - name: Fetch and build kernel
+        env:  
+        
+          DEVKEYS_DIR: /usr/share/vboot/devkeys
         run: |
-          mkdir -p build/rootfs/lib/modules
-          cp -a \
-            kernel/build/modules/6.12.50-stb-cbm+ \
-            build/rootfs/lib/modules/
+            chmod +x kernel/fetch.sh
+            ./kernel/fetch.sh
 
       - name: Archive rootfs
         run: |
