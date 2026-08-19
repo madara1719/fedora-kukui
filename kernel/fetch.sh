@@ -68,7 +68,7 @@ echo "==> Packing vmlinux.kpart with vbutil_kernel..."
 
 # Ruta a tus devkeys. En local suele ser ~/devkeys o /usr/share/vboot/devkeys
 # En GitHub Actions, deberás configurar esta variable de entorno o montar las claves
-DEVKEYS_DIR="${DEVKEYS_DIR:-${HOME}/devkeys}"
+DEVKEYS_DIR="${DEVKEYS_DIR:-/usr/share/vboot/devkeys}" 
 
 if [[ ! -f "${DEVKEYS_DIR}/kernel.keyblock" ]]; then
     echo "ERROR: devkeys not found at ${DEVKEYS_DIR}/kernel.keyblock"
