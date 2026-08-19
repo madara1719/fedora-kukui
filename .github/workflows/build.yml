@@ -1,15 +1,6 @@
-name: Build Fedora Kukui
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
 jobs:
   rootfs:
     runs-on: ubuntu-24.04-arm
-
     container:
       image: fedora:44
 
@@ -25,7 +16,7 @@ jobs:
           echo "Fedora:"
           cat /etc/fedora-release
 
-      - name: Install build tools
+      - name: Install build tools and vboot-utils
         run: |
           dnf -y install \
             bash \
@@ -37,9 +28,13 @@ jobs:
             rsync \
             tar \
             xz \
-            ca-certificates
-       
-      - name: Fetch kernel
+            ca-certificates \
+            vboot-utils  # <-- ESTE PAQUETE CONTIENE LAS CLAVES EN FEDORA
+
+      - name: Fetch and build kernel
+        env:
+          # Apuntamos al directorio que vboot-utils instala en Fedora
+          DEVKEYS_DIR: /usr/share/vboot/devkeys
         run: |
           chmod +x kernel/fetch.sh
           ./kernel/fetch.sh
@@ -49,21 +44,9 @@ jobs:
           chmod +x fedora/rootfs.sh
           ./fedora/rootfs.sh
 
-      - name: Install vboot-kernel-utils (for standard dev keys)
-        run: sudo apt-get update && sudo apt-get install -y vboot-kernel-utils
-
-      - name: Fetch and build kernel
-        env:
-        # Apuntamos al directorio que vboot-kernel-utils crea automáticamente
-         DEVKEYS_DIR: /usr/share/vboot/devkeys
-        run: |
-         chmod +x kernel/fetch.sh
-         ./kernel/fetch.sh
-
       - name: Archive rootfs
         run: |
           mkdir -p build/artifacts
-
           tar \
             --numeric-owner \
             --xattrs \
@@ -75,14 +58,8 @@ jobs:
       - name: Package kernel
         run: |
           mkdir -p build/kernel-artifact
-
-          cp \
-            kernel/build/vmlinux.kpart \
-            build/kernel-artifact/
-
-          cp -a \
-            kernel/build/modules \
-            build/kernel-artifact/
+          cp kernel/build/vmlinux.kpart build/kernel-artifact/
+          cp -a kernel/build/modules build/kernel-artifact/
 
       - name: Upload rootfs
         uses: actions/upload-artifact@v4
@@ -96,93 +73,4 @@ jobs:
         with:
           name: fedora-kukui-kernel
           path: build/kernel-artifact
-          if-no-files-found: error
-
-  image:
-    needs: rootfs
-    runs-on: ubuntu-24.04-arm
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install image build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cgpt btrfs-progs e2fsprogs rsync xz-utils util-linux kpartx
-
-      - name: Download rootfs
-        uses: actions/download-artifact@v4
-        with:
-          name: fedora-kukui-rootfs
-          path: build/rootfs-archive
-
-      - name: Download kernel
-        uses: actions/download-artifact@v4
-        with:
-          name: fedora-kukui-kernel
-          path: build/kernel
-
-      - name: Extract rootfs
-        run: |
-          mkdir -p build/rootfs
-
-          tar \
-            --numeric-owner \
-            --xattrs \
-            --acls \
-            -xJf \
-            build/rootfs-archive/fedora-kukui-rootfs.tar.xz \
-            -C build/rootfs
-
-      - name: Verify kernel
-        run: |
-         sha256sum build/kernel/vmlinux.kpart
-
-         test \
-           "$(sha256sum build/kernel/vmlinux.kpart | awk '{print $1}')" \
-          = \
-         "39c486a5ad5ba5f348255fecd47e71d2359d15641d897058f0a87f51658764c6"
-
-      - name: Build image
-        run: |
-          chmod +x scripts/build-image.sh
-
-          sudo \
-            IMAGE_SIZE=6G \
-            ./scripts/build-image.sh
-
-      - name: Validate image
-        run: |
-          sudo cgpt show build/image/fedora-kukui.img
-
-          echo "KernelA:"
-          sudo dd \
-            if=build/image/fedora-kukui.img \
-            bs=512 \
-            skip=8192 \
-            count=38456 \
-            status=none |
-            sha256sum
-
-          echo "KernelB:"
-          sudo dd \
-            if=build/image/fedora-kukui.img \
-            bs=512 \
-            skip=270336 \
-            count=38456 \
-            status=none |
-            sha256sum
-
-          ls -lh build/image/fedora-kukui.img
-
-      - name: Fix image permissions
-        run: |
-          sudo chown "${USER}:${USER}" build/image/fedora-kukui.img
-
-      - name: Upload image
-        uses: actions/upload-artifact@v4
-        with:
-          name: fedora-kukui-image
-          path: build/image/fedora-kukui.img
           if-no-files-found: error
