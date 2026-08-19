@@ -49,11 +49,12 @@ jobs:
           chmod +x fedora/rootfs.sh
           ./fedora/rootfs.sh
 
-      - name: Install vboot-utils (for standard dev keys)
-        run: sudo apt-get update && sudo apt-get install -y vboot-utils
+      - name: Install vboot-kernel-utils (for standard dev keys)
+        run: sudo apt-get update && sudo apt-get install -y vboot-kernel-utils
 
       - name: Fetch and build kernel
         env:
+        # Apuntamos al directorio que vboot-kernel-utils crea automáticamente
          DEVKEYS_DIR: /usr/share/vboot/devkeys
         run: |
          chmod +x kernel/fetch.sh
