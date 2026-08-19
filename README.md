@@ -1,3 +1,4 @@
 # fedora-kukui 
-Scripts by ChatGPT
+Scripts by ChatGPT 
+
 Now working with Qwen
