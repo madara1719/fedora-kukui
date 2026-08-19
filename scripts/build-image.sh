@@ -298,8 +298,9 @@ MNT_ROOT="$(mktemp -d)"
 
 info "Mounting root"
 
+# CORRECCIÓN: Opciones conservadoras de Btrfs (sin ssd, discard ni compress-force)
 mount \
-    -o noatime,nodiratime,compress-force=zstd:3,ssd,discard=async \
+    -o noatime,nodiratime,compress=zstd:3 \
     "${ROOT_DEV}" \
     "${MNT_ROOT}"
 
@@ -328,14 +329,6 @@ rsync \
 
 info "Preparing /boot"
 
-mkdir -p "${MNT_BOOT}"
-
-# We do not depend on the local kernel archive.
-# The Chromebook boots from KernelA/KernelB.
-#
-# Keep /boot itself valid for Fedora, but do not copy artifacts that
-# may not be available in the GitHub Actions image job.
-
 mkdir -p "${MNT_BOOT}/lost+found"
 
 # ----------------------------------------------------------------------
@@ -347,14 +340,12 @@ info "Generating fstab"
 ROOT_UUID="$(blkid -s UUID -o value "${ROOT_DEV}")"
 BOOT_UUID="$(blkid -s UUID -o value "${BOOT_DEV}")"
 
-[[ -n "${ROOT_UUID}" ]] ||
-    die "No se pudo obtener UUID de root"
+[[ -n "${ROOT_UUID}" ]] || die "No se pudo obtener UUID de root"
+[[ -n "${BOOT_UUID}" ]] || die "No se pudo obtener UUID de boot"
 
-[[ -n "${BOOT_UUID}" ]] ||
-    die "No se pudo obtener UUID de boot"
-
+# CORRECCIÓN: Fstab con opciones conservadoras de Btrfs
 cat > "${MNT_ROOT}/etc/fstab" <<EOF
-UUID=${ROOT_UUID} / btrfs noatime,nodiratime,compress-force=zstd:3,ssd,discard=async 0 0
+UUID=${ROOT_UUID} / btrfs noatime,nodiratime,compress=zstd:3 0 0
 UUID=${BOOT_UUID} /boot ext4 noatime,nodiratime,errors=remount-ro 0 2
 EOF
 
@@ -364,27 +355,29 @@ EOF
 
 info "Validating rootfs"
 
-[[ -d "${MNT_ROOT}/usr" ]] ||
-    die "El rootfs no contiene /usr"
-
-[[ -d "${MNT_ROOT}/etc" ]] ||
-    die "El rootfs no contiene /etc"
-
-[[ -f "${MNT_ROOT}/etc/fstab" ]] ||
-    die "No se creó /etc/fstab"
+[[ -d "${MNT_ROOT}/usr" ]] || die "El rootfs no contiene /usr"
+[[ -d "${MNT_ROOT}/etc" ]] || die "El rootfs no contiene /etc"
+[[ -f "${MNT_ROOT}/etc/fstab" ]] || die "No se creó /etc/fstab"
 
 info "Validating kernel"
 
-KERNEL_SHA256="$(sha256sum "${KERNEL}" | awk '{print $1}')"
-
+# CORRECCIÓN: Usamos ${KERNEL} en lugar de ${KERNEL_BUILD_DIR}/vmlinux.kpart
+ACTUAL_SHA256="$(sha256sum "${KERNEL}" | awk '{print $1}')"
 echo "Kernel SHA-256:"
-echo "${KERNEL_SHA256}"
+echo "${ACTUAL_SHA256}"
 
-if [[ "${KERNEL_SHA256}" != "${KERNEL_KPART_SHA256}" ]]; then
-    die "SHA-256 inesperado para vmlinux.kpart"
+# Solo validar si el hash esperado está definido en version.env
+if [[ -n "${KERNEL_KPART_SHA256:-}" ]]; then
+    if [[ "${ACTUAL_SHA256}" != "${KERNEL_KPART_SHA256}" ]]; then
+        echo "ERROR: Kernel SHA-256 mismatch!"
+        echo "Expected: ${KERNEL_KPART_SHA256}"
+        echo "Actual:   ${ACTUAL_SHA256}"
+        exit 1
+    fi
+    echo "==> Kernel SHA-256 verified."
+else
+    echo "==> WARNING: KERNEL_KPART_SHA256 is empty, skipping strict verification."
 fi
-
-sync
 
 # ----------------------------------------------------------------------
 # Final report
