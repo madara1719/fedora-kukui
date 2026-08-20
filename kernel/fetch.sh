@@ -117,26 +117,27 @@ echo "==> Building kpart with mkdepthcharge"
 
 if ! command -v mkdepthcharge &>/dev/null; then
     echo "ERROR: mkdepthcharge not found in PATH"
-    echo "PATH=${PATH}"
-    echo "--- /usr/local/bin ---"
-    ls -la /usr/local/bin 2>/dev/null || true
-    command -v python3 || echo "python3 NOT FOUND"
-    command -v pip3 || echo "pip3 NOT FOUND"
     exit 1
 fi
 
-DTB_FLAGS=()
+# Construir lista de argumentos posicionales: vmlinuz + initramfs + DTBs
+POSITIONAL_ARGS=()
+POSITIONAL_ARGS+=("${VMLINUX}")
+POSITIONAL_ARGS+=("${INITRAMFS}")
 for dtb in "${DTB_FILES[@]}"; do
-    DTB_FLAGS+=(--dtb "${dtb}")
+    POSITIONAL_ARGS+=("${dtb}")
 done
+
+echo "==> Packing ${#DTB_FILES[@]} DTBs + kernel + initramfs into kpart"
 
 mkdepthcharge \
     --output "${KPART}" \
-    "${DTB_FLAGS[@]}" \
-    --initramfs "${INITRAMFS}" \
     --cmdline "${KERNEL_CMDLINE}" \
-    --devkeys "${DEVKEYS_DIR}" \
-    "${VMLINUX}"
+    --keyblock "${DEVKEYS_DIR}/kernel.keyblock" \
+    --signprivate "${DEVKEYS_DIR}/kernel_data_key.vbprivk" \
+    --version 1 \
+    -- \
+    "${POSITIONAL_ARGS[@]}"
 
 echo "==> Kernel ready."
 echo "    kpart: $(ls -lh "${KPART}" | awk '{print $5}')"
