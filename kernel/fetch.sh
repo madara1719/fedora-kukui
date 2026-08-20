@@ -157,14 +157,33 @@ set -e
 echo "==> mkdepthcharge exit code: ${MKDC_EXIT}"
 
 # Si no creó el archivo, intentar capturar stdout
-if [[ ! -f "${KPART}" ]]; then
-    echo "WARNING: mkdepthcharge did not create ${KPART}, checking stdout..."
+# Si no creó el archivo, intentar capturar stdout
+if [[ ! -f "${KPART}" ]] || [[ $(stat -c%s "${KPART}") -lt 1000 ]]; then
+    echo "WARNING: mkdepthcharge output too small or missing"
     if [[ -s /tmp/mkdepthcharge.stdout ]]; then
-        echo "==> mkdepthcharge wrote to stdout ($(wc -c < /tmp/mkdepthcharge.stdout) bytes)"
-        mv /tmp/mkdepthcharge.stdout "${KPART}"
-    else
-        echo "ERROR: mkdepthcharge produced no output"
-        cat /tmp/mkdepthcharge.stdout || true
+        echo "==> mkdepthcharge stdout ($(wc -c < /tmp/mkdepthcharge.stdout) bytes):"
+        cat /tmp/mkdepthcharge.stdout
+        echo "---"
+    fi
+    
+    # Intentar con sintaxis alternativa: todos los archivos como posicionales sin --
+    echo "==> Retrying with alternative syntax..."
+    set +e
+    mkdepthcharge \
+        -o "${KPART}" \
+        --cmdline "${KERNEL_CMDLINE}" \
+        --keyblock "${DEVKEYS_DIR}/kernel.keyblock" \
+        --signprivate "${DEVKEYS_DIR}/kernel_data_key.vbprivk" \
+        --version 1 \
+        "${VMLINUX}" "${INITRAMFS}" "${DTB_FILES[@]}" 2>&1 | tee /tmp/mkdepthcharge2.log
+    MKDC_EXIT2=$?
+    set -e
+    
+    echo "==> Retry exit code: ${MKDC_EXIT2}"
+    cat /tmp/mkdepthcharge2.log
+    
+    if [[ ! -f "${KPART}" ]] || [[ $(stat -c%s "${KPART}") -lt 1000 ]]; then
+        echo "ERROR: mkdepthcharge failed to create valid kpart"
         ls -la "${BUILD_DIR}/" || true
         exit 1
     fi
