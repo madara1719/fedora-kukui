@@ -14,9 +14,6 @@ KPART="${BUILD_DIR}/vmlinux.kpart"
 INITRAMFS="${BUILD_DIR}/initramfs.img"
 DEVKEYS_DIR="${DEVKEYS_DIR:-/usr/share/vboot/devkeys}"
 
-# Asegurar que los binarios instalados por pip estén en el PATH
-export PATH="$PATH:$(python3 -m site --user-base)/bin:/root/.local/bin"
-
 mkdir -p "${BUILD_DIR}"
 
 echo "==> Kernel: ${KERNEL_RELEASE}"
@@ -72,37 +69,38 @@ rm -rf "${DTB_DIR}"
 mkdir -p "${DTB_DIR}"
 cp -a "${DTB_SOURCE_DIR}" "${DTB_DIR}/"
 
-# --- Staging de módulos para dracut ---
+# --- staging de módulos para dracut ---
 echo "==> Staging modules to /lib/modules/${KERNEL_KVER}"
 mkdir -p /lib/modules
 rm -rf "/lib/modules/${KERNEL_KVER}"
 cp -a "${MODULES_DIR}/${KERNEL_KVER}" "/lib/modules/${KERNEL_KVER}"
 depmod -a "${KERNEL_KVER}" 2>/dev/null || true
 
-# --- Generar initramfs con detección dinámica de drivers ---
+# --- initramfs (drivers con nombres correctos) ---
 echo "==> Generating initramfs with dracut"
-DESIRED_DRIVERS="btrfs xhci-mtk xhci-hcd usb-storage uas sd-mod mmc-block"
+DESIRED_DRIVERS="btrfs xhci-hcd xhci-plat xhci-mtk xhci-mtk-hcd usb-storage uas sd-mod mmc-block"
 AVAILABLE_DRIVERS=""
 
 for drv in ${DESIRED_DRIVERS}; do
-    # Buscar tanto con guiones como con guiones bajos
-    drv_underscore=$(echo "${drv}" | tr '-' '_')
-    drv_hyphen=$(echo "${drv}" | tr '_' '-')
-    
-    if find "/lib/modules/${KERNEL_KVER}" \( -name "${drv_underscore}.ko*" -o -name "${drv_hyphen}.ko*" \) -print -quit 2>/dev/null | grep -q .; then
-        AVAILABLE_DRIVERS="${AVAILABLE_DRIVERS} ${drv}"
+    drv_us=$(echo "${drv}" | tr '-' '_')
+    drv_hy=$(echo "${drv}" | tr '_' '-')
+    if find "/lib/modules/${KERNEL_KVER}" \
+        \( -name "${drv_us}.ko*" -o -name "${drv_hy}.ko*" \) \
+        -print -quit 2>/dev/null | grep -q .; then
+        AVAILABLE_DRIVERS="${AVAILABLE_DRIVERS} ${drv_us}"
         echo "    ✓ Found driver: ${drv}"
     else
-        echo "    ✗ Driver not found (skipping): ${drv}"
+        echo "    - Not a loadable module (built-in or absent): ${drv}"
     fi
 done
 
-# Intentar con drivers detectados, fallback sin drivers explícitos si falla
-if ! dracut --force --no-hostonly --no-early-microcode \
-    --add-drivers "${AVAILABLE_DRIVERS}" \
-    "${INITRAMFS}" "${KERNEL_KVER}"; then
-    
-    echo "WARNING: dracut failed with explicit drivers, retrying without --add-drivers"
+DRACUT_ARGS=(--force --no-hostonly --no-early-microcode)
+if [[ -n "${AVAILABLE_DRIVERS// /}" ]]; then
+    DRACUT_ARGS+=(--add-drivers "${AVAILABLE_DRIVERS# }")
+fi
+
+if ! dracut "${DRACUT_ARGS[@]}" "${INITRAMFS}" "${KERNEL_KVER}"; then
+    echo "WARNING: dracut failed with --add-drivers, retrying without them"
     dracut --force --no-hostonly --no-early-microcode \
         "${INITRAMFS}" "${KERNEL_KVER}"
 fi
@@ -113,15 +111,17 @@ if [[ ! -s "${INITRAMFS}" ]]; then
 fi
 echo "==> initramfs: $(ls -lh "${INITRAMFS}" | awk '{print $5}')"
 
-# --- Empaquetar kpart con mkdepthcharge ---
+# --- kpart con mkdepthcharge ---
 echo "==> Building kpart with mkdepthcharge"
 [[ -f "${DEVKEYS_DIR}/kernel.keyblock" ]] || { echo "ERROR: devkeys not found at ${DEVKEYS_DIR}"; exit 1; }
 
 if ! command -v mkdepthcharge &>/dev/null; then
     echo "ERROR: mkdepthcharge not found in PATH"
-    echo "Current PATH: ${PATH}"
-    echo "Python user-site: $(python3 -m site --user-base)/bin"
-    ls -la "$(python3 -m site --user-base)/bin/" 2>/dev/null || true
+    echo "PATH=${PATH}"
+    echo "--- /usr/local/bin ---"
+    ls -la /usr/local/bin 2>/dev/null || true
+    command -v python3 || echo "python3 NOT FOUND"
+    command -v pip3 || echo "pip3 NOT FOUND"
     exit 1
 fi
 
@@ -143,6 +143,6 @@ echo "    kpart: $(ls -lh "${KPART}" | awk '{print $5}')"
 echo "    modules: ${MODULES_DIR}"
 echo "    DTBs: ${#DTB_FILES[@]} Kukui variants"
 
-# --- Verificación final ---
+# --- verificación final ---
 echo "==> Verifying packed kpart..."
 vbutil_kernel --verify "${KPART}" | grep -E "Config:|Body verification" || true
