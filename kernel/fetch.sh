@@ -112,6 +112,7 @@ fi
 echo "==> initramfs: $(ls -lh "${INITRAMFS}" | awk '{print $5}')"
 
 # --- kpart con mkdepthcharge ---
+# --- kpart con mkdepthcharge ---
 echo "==> Building kpart with mkdepthcharge"
 [[ -f "${DEVKEYS_DIR}/kernel.keyblock" ]] || { echo "ERROR: devkeys not found at ${DEVKEYS_DIR}"; exit 1; }
 
@@ -120,7 +121,16 @@ if ! command -v mkdepthcharge &>/dev/null; then
     exit 1
 fi
 
-# Construir lista de argumentos posicionales: vmlinuz + initramfs + DTBs
+# Verificar dependencias críticas de mkdepthcharge
+for tool in mkimage dtc futility; do
+    if ! command -v "${tool}" &>/dev/null; then
+        echo "WARNING: ${tool} not found (mkdepthcharge may need it)"
+    else
+        echo "✓ ${tool} found at $(command -v "${tool}")"
+    fi
+done
+
+# Construir lista de argumentos posicionales
 POSITIONAL_ARGS=()
 POSITIONAL_ARGS+=("${VMLINUX}")
 POSITIONAL_ARGS+=("${INITRAMFS}")
@@ -129,7 +139,11 @@ for dtb in "${DTB_FILES[@]}"; do
 done
 
 echo "==> Packing ${#DTB_FILES[@]} DTBs + kernel + initramfs into kpart"
+echo "==> Output: ${KPART}"
+echo "==> Args: ${POSITIONAL_ARGS[*]}"
 
+# Ejecutar con verbosidad y capturar salida completa
+set +e
 mkdepthcharge \
     --output "${KPART}" \
     --cmdline "${KERNEL_CMDLINE}" \
@@ -137,7 +151,21 @@ mkdepthcharge \
     --signprivate "${DEVKEYS_DIR}/kernel_data_key.vbprivk" \
     --version 1 \
     -- \
-    "${POSITIONAL_ARGS[@]}"
+    "${POSITIONAL_ARGS[@]}" 2>&1 | tee /tmp/mkdepthcharge.log
+MKDC_EXIT=$?
+set -e
+
+echo "==> mkdepthcharge exit code: ${MKDC_EXIT}"
+cat /tmp/mkdepthcharge.log
+
+# Verificar si se creó el archivo
+if [[ ! -f "${KPART}" ]]; then
+    echo "ERROR: mkdepthcharge did not create ${KPART}"
+    echo "Searching for any .kpart files created..."
+    find "${BUILD_DIR}" -name "*.kpart" -o -name "*.itb" 2>/dev/null || true
+    ls -la "${BUILD_DIR}/" || true
+    exit 1
+fi
 
 echo "==> Kernel ready."
 echo "    kpart: $(ls -lh "${KPART}" | awk '{print $5}')"
