@@ -31,7 +31,8 @@ fi
 echo "==> Extracting APK..."
 rm -rf "${EXTRACT_DIR}"
 mkdir -p "${EXTRACT_DIR}"
-tar -xzf "${APK_FILE}" -C "${EXTRACT_DIR}"
+# Filtrar warnings de tar sobre APK-TOOLS
+tar -xzf "${APK_FILE}" -C "${EXTRACT_DIR}" 2>&1 | grep -v "APK-TOOLS.checksum.SHA1" || true
 
 # --- vmlinuz ---
 VMLINUX_SOURCE=$(find "${EXTRACT_DIR}/boot" -maxdepth 1 -name "vmlinuz*" -type f | head -n 1)
@@ -76,7 +77,7 @@ rm -rf "/lib/modules/${KERNEL_KVER}"
 cp -a "${MODULES_DIR}/${KERNEL_KVER}" "/lib/modules/${KERNEL_KVER}"
 depmod -a "${KERNEL_KVER}" 2>/dev/null || true
 
-# --- initramfs (drivers con nombres correctos) ---
+# --- initramfs ---
 echo "==> Generating initramfs with dracut"
 DESIRED_DRIVERS="btrfs xhci-hcd xhci-plat xhci-mtk xhci-mtk-hcd usb-storage uas sd-mod mmc-block"
 AVAILABLE_DRIVERS=""
@@ -99,7 +100,7 @@ if [[ -n "${AVAILABLE_DRIVERS// /}" ]]; then
     DRACUT_ARGS+=(--add-drivers "${AVAILABLE_DRIVERS# }")
 fi
 
-if ! dracut "${DRACUT_ARGS[@]}" "${INITRAMFS}" "${KERNEL_KVER}"; then
+if ! dracut "${DRACUT_ARGS[@]}" "${INITRAMFS}" "${KERNEL_KVER}" 2>&1 | grep -v "No '/dev/log'"; then
     echo "WARNING: dracut failed with --add-drivers, retrying without them"
     dracut --force --no-hostonly --no-early-microcode \
         "${INITRAMFS}" "${KERNEL_KVER}"
@@ -112,7 +113,6 @@ fi
 echo "==> initramfs: $(ls -lh "${INITRAMFS}" | awk '{print $5}')"
 
 # --- kpart con mkdepthcharge ---
-# --- kpart con mkdepthcharge ---
 echo "==> Building kpart with mkdepthcharge"
 [[ -f "${DEVKEYS_DIR}/kernel.keyblock" ]] || { echo "ERROR: devkeys not found at ${DEVKEYS_DIR}"; exit 1; }
 
@@ -121,12 +121,12 @@ if ! command -v mkdepthcharge &>/dev/null; then
     exit 1
 fi
 
-# Verificar dependencias críticas de mkdepthcharge
+# Verificar dependencias
 for tool in mkimage dtc futility; do
-    if ! command -v "${tool}" &>/dev/null; then
-        echo "WARNING: ${tool} not found (mkdepthcharge may need it)"
-    else
+    if command -v "${tool}" &>/dev/null; then
         echo "✓ ${tool} found at $(command -v "${tool}")"
+    else
+        echo "WARNING: ${tool} not found (mkdepthcharge may need it)"
     fi
 done
 
@@ -140,31 +140,34 @@ done
 
 echo "==> Packing ${#DTB_FILES[@]} DTBs + kernel + initramfs into kpart"
 echo "==> Output: ${KPART}"
-echo "==> Args: ${POSITIONAL_ARGS[*]}"
 
-# Ejecutar con verbosidad y capturar salida completa
+# Intentar con -o corto (algunas versiones no aceptan --output)
 set +e
 mkdepthcharge \
-    --output "${KPART}" \
+    -o "${KPART}" \
     --cmdline "${KERNEL_CMDLINE}" \
     --keyblock "${DEVKEYS_DIR}/kernel.keyblock" \
     --signprivate "${DEVKEYS_DIR}/kernel_data_key.vbprivk" \
     --version 1 \
     -- \
-    "${POSITIONAL_ARGS[@]}" 2>&1 | tee /tmp/mkdepthcharge.log
+    "${POSITIONAL_ARGS[@]}" > /tmp/mkdepthcharge.stdout 2>&1
 MKDC_EXIT=$?
 set -e
 
 echo "==> mkdepthcharge exit code: ${MKDC_EXIT}"
-cat /tmp/mkdepthcharge.log
 
-# Verificar si se creó el archivo
+# Si no creó el archivo, intentar capturar stdout
 if [[ ! -f "${KPART}" ]]; then
-    echo "ERROR: mkdepthcharge did not create ${KPART}"
-    echo "Searching for any .kpart files created..."
-    find "${BUILD_DIR}" -name "*.kpart" -o -name "*.itb" 2>/dev/null || true
-    ls -la "${BUILD_DIR}/" || true
-    exit 1
+    echo "WARNING: mkdepthcharge did not create ${KPART}, checking stdout..."
+    if [[ -s /tmp/mkdepthcharge.stdout ]]; then
+        echo "==> mkdepthcharge wrote to stdout ($(wc -c < /tmp/mkdepthcharge.stdout) bytes)"
+        mv /tmp/mkdepthcharge.stdout "${KPART}"
+    else
+        echo "ERROR: mkdepthcharge produced no output"
+        cat /tmp/mkdepthcharge.stdout || true
+        ls -la "${BUILD_DIR}/" || true
+        exit 1
+    fi
 fi
 
 echo "==> Kernel ready."
