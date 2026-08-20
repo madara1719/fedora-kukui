@@ -37,7 +37,8 @@ jobs:
             tar \
             xz \
             ca-certificates \
-            vboot-utils
+            vboot-utils \ 
+            dracut
 
       - name: Fetch and build kernel
         env:
