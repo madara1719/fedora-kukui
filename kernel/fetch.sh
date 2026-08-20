@@ -141,52 +141,25 @@ done
 echo "==> Packing ${#DTB_FILES[@]} DTBs + kernel + initramfs into kpart"
 echo "==> Output: ${KPART}"
 
-# Intentar con -o corto (algunas versiones no aceptan --output)
+# NOTA CRÍTICA: ¡No usar --version! mkdepthcharge lo interpreta como "imprimir versión y salir".
+# Usamos --keydir para pasar el directorio de claves de forma limpia.
 set +e
 mkdepthcharge \
-    -o "${KPART}" \
+    --output "${KPART}" \
     --cmdline "${KERNEL_CMDLINE}" \
-    --keyblock "${DEVKEYS_DIR}/kernel.keyblock" \
-    --signprivate "${DEVKEYS_DIR}/kernel_data_key.vbprivk" \
-    --version 1 \
+    --keydir "${DEVKEYS_DIR}" \
     -- \
-    "${POSITIONAL_ARGS[@]}" > /tmp/mkdepthcharge.stdout 2>&1
+    "${POSITIONAL_ARGS[@]}" 2>&1 | tee /tmp/mkdepthcharge.log
 MKDC_EXIT=$?
 set -e
 
 echo "==> mkdepthcharge exit code: ${MKDC_EXIT}"
+cat /tmp/mkdepthcharge.log
 
-# Si no creó el archivo, intentar capturar stdout
-# Si no creó el archivo, intentar capturar stdout
-if [[ ! -f "${KPART}" ]] || [[ $(stat -c%s "${KPART}") -lt 1000 ]]; then
-    echo "WARNING: mkdepthcharge output too small or missing"
-    if [[ -s /tmp/mkdepthcharge.stdout ]]; then
-        echo "==> mkdepthcharge stdout ($(wc -c < /tmp/mkdepthcharge.stdout) bytes):"
-        cat /tmp/mkdepthcharge.stdout
-        echo "---"
-    fi
-    
-    # Intentar con sintaxis alternativa: todos los archivos como posicionales sin --
-    echo "==> Retrying with alternative syntax..."
-    set +e
-    mkdepthcharge \
-        -o "${KPART}" \
-        --cmdline "${KERNEL_CMDLINE}" \
-        --keyblock "${DEVKEYS_DIR}/kernel.keyblock" \
-        --signprivate "${DEVKEYS_DIR}/kernel_data_key.vbprivk" \
-        --version 1 \
-        "${VMLINUX}" "${INITRAMFS}" "${DTB_FILES[@]}" 2>&1 | tee /tmp/mkdepthcharge2.log
-    MKDC_EXIT2=$?
-    set -e
-    
-    echo "==> Retry exit code: ${MKDC_EXIT2}"
-    cat /tmp/mkdepthcharge2.log
-    
-    if [[ ! -f "${KPART}" ]] || [[ $(stat -c%s "${KPART}") -lt 1000 ]]; then
-        echo "ERROR: mkdepthcharge failed to create valid kpart"
-        ls -la "${BUILD_DIR}/" || true
-        exit 1
-    fi
+if [[ ${MKDC_EXIT} -ne 0 ]] || [[ ! -f "${KPART}" ]] || [[ $(stat -c%s "${KPART}" 2>/dev/null || echo 0) -lt 1000 ]]; then
+    echo "ERROR: mkdepthcharge failed to create valid kpart"
+    ls -la "${BUILD_DIR}/" || true
+    exit 1
 fi
 
 echo "==> Kernel ready."
