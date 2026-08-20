@@ -24,12 +24,11 @@ jobs:
           echo "Fedora:"
           cat /etc/fedora-release
 
-      - name: Install build tools and vboot-utils
+      - name: Install build tools, vboot-utils, dracut and depthcharge-tools
         run: |
           dnf -y install \
             bash \
             coreutils \
-            dnf \
             findutils \
             grep \
             sed \
@@ -38,7 +37,21 @@ jobs:
             xz \
             ca-certificates \
             vboot-utils \
-            dracut
+            dracut \
+            kmod \
+            dtc \
+            uboot-tools \
+            python3-pip
+
+          pip3 install --break-system-packages depthcharge-tools
+
+          echo "=== Tool verification ==="
+          command -v vbutil_kernel
+          command -v dracut
+          command -v dtc
+          command -v mkimage
+          command -v mkdepthcharge
+          mkdepthcharge --help || true
       - name: Fetch and build kernel
         env:
           DEVKEYS_DIR: /usr/share/vboot/devkeys
