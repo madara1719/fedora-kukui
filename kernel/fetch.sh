@@ -79,6 +79,70 @@ depmod -a "${KERNEL_KVER}" 2>/dev/null || true
 
 # --- initramfs ---
 echo "==> Generating initramfs with dracut"
+
+# === HOOK 1: Diagnóstico temprano (pre-mount) ===
+echo "==> Creating initramfs diagnostic hook (pre-mount)"
+HOOK_DIR="/usr/lib/dracut/modules.d/99input-diag"
+mkdir -p "${HOOK_DIR}"
+
+cat > "${HOOK_DIR}/module-setup.sh" << 'HOOKEOF'
+#!/bin/bash
+check() { return 0; }
+depends() { return 0; }
+install() {
+    inst_hook pre-mount 99 "$moddir/input-diag.sh"
+}
+HOOKEOF
+
+cat > "${HOOK_DIR}/input-diag.sh" << 'DIAGEOF'
+#!/bin/bash
+LOGFILE="/run/input-diag-early.log"
+{
+    echo "=== EARLY INITRAMFS DIAG $(date) ==="
+    echo "--- Kernel version ---"
+    uname -a
+    echo "--- /dev ---"
+    ls -la /dev/ | head -30
+    echo "--- /sys/class/input ---"
+    ls -la /sys/class/input/ 2>&1 || echo "No /sys/class/input"
+    echo "--- /sys/bus/spi/devices ---"
+    ls -la /sys/bus/spi/devices/ 2>&1 || echo "No SPI devices"
+    echo "--- /sys/bus/i2c/devices ---"
+    ls -la /sys/bus/i2c/devices/ 2>&1 || echo "No I2C devices"
+    echo "--- dmesg cros/ec/elan/spi/input ---"
+    dmesg | grep -iE 'cros.ec|elan|i2c.hid|spi|input|keyboard|touchpad|error|fail' | tail -50
+    echo "--- modules loaded ---"
+    cat /proc/modules 2>/dev/null | grep -iE 'cros|elan|i2c|hid|spi|input' || echo "No matching modules"
+    echo "=== END EARLY DIAG ==="
+} > "${LOGFILE}" 2>&1
+DIAGEOF
+
+chmod +x "${HOOK_DIR}/module-setup.sh" "${HOOK_DIR}/input-diag.sh"
+
+# === HOOK 2: Copiar log al rootfs (post-mount) ===
+echo "==> Creating initramfs copy-diag hook (mount)"
+POST_HOOK_DIR="/usr/lib/dracut/modules.d/99copy-diag"
+mkdir -p "${POST_HOOK_DIR}"
+
+cat > "${POST_HOOK_DIR}/module-setup.sh" << 'POSTHOOKEOF'
+#!/bin/bash
+check() { return 0; }
+depends() { return 0; }
+install() {
+    inst_hook mount 99 "$moddir/copy-diag.sh"
+}
+POSTHOOKEOF
+
+cat > "${POST_HOOK_DIR}/copy-diag.sh" << 'COPYEOF'
+#!/bin/bash
+if [ -f /run/input-diag-early.log ]; then
+    cp /run/input-diag-early.log /sysroot/input-diag.log 2>/dev/null || true
+fi
+COPYEOF
+
+chmod +x "${POST_HOOK_DIR}/module-setup.sh" "${POST_HOOK_DIR}/copy-diag.sh"
+
+# === Generar initramfs con los hooks incluidos ===
 DESIRED_DRIVERS="btrfs xhci-hcd xhci-plat xhci-mtk xhci-mtk-hcd usb-storage uas sd-mod mmc-block"
 AVAILABLE_DRIVERS=""
 
